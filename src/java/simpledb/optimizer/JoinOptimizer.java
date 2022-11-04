@@ -130,7 +130,8 @@ public class JoinOptimizer {
             // HINT: You may need to use the variable "j" if you implemented
             // a join algorithm that's more complicated than a basic
             // nested-loops join.
-            return -1.0;
+            //cost = IO Cost(table1 scan cost + table2 scan cost for each tuple) + CPU Cost(total amount of scan)
+            return cost1 + card1 * cost2 + card1 * card2;
         }
     }
 
@@ -176,6 +177,27 @@ public class JoinOptimizer {
                                                    Map<String, Integer> tableAliasToId) {
         int card = 1;
         // some code goes here
+        if(joinOp == Predicate.Op.EQUALS){
+            // 取非主键
+            if(t1pkey && !t2pkey){
+                card = card2;
+            }
+            else if(!t1pkey && t2pkey){
+                card = card1;
+            }
+            // 两个非主键，取最大
+            else if(!t1pkey && !t2pkey){
+                card = Math.max(card1, card2);
+            }
+            // 两个主键，取最小
+            else{
+                card = Math.min(card1, card2);
+            }
+        }
+        else{
+            // 如果不是等于的情况下，是 30%
+            card = (int)(0.3 * card1 * card2);
+        }
         return card <= 0 ? 1 : card;
     }
 
@@ -238,8 +260,38 @@ public class JoinOptimizer {
 
         // some code goes here
         //Replace the following
-        return joins;
+        CostCard bestCostCard = new CostCard();
+        PlanCache planCache = new PlanCache();
+        int size = joins.size();
+        for(int i = 1; i <= size; i++){
+            // 枚举当前子集的所有大小
+            Set<Set<LogicalJoinNode>> subSets = enumerateSubsets(joins, i);
+            for(Set<LogicalJoinNode> subSet : subSets){
+                // 最佳花费
+                double bestCostSoFar = Double.MAX_VALUE;
+                bestCostCard = new CostCard();
+                for (LogicalJoinNode removeJoinNode : subSet) {
+                    // 计算查询子代价
+                    CostCard costCard = computeCostAndCardOfSubplan(stats, filterSelectivities, removeJoinNode, subSet, bestCostSoFar, planCache);
+                    if (costCard != null) {
+                        bestCostSoFar = costCard.cost;
+                        bestCostCard = costCard;
+                    }
+                }
+                // 如果被修改，说明有最佳
+                if(bestCostSoFar != Double.MAX_VALUE){
+                    planCache.addPlan(subSet, bestCostCard.cost, bestCostCard.card, bestCostCard.plan);
+                }
+            }
+            // 是否打印图形化计划
+            if(explain){
+                printJoins(bestCostCard.plan, planCache, stats, filterSelectivities);
+            }
+        }
+
+        return bestCostCard.plan;
     }
+
 
     // ===================== Private Methods =================================
 

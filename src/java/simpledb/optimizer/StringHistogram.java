@@ -31,7 +31,7 @@ public class StringHistogram {
         int v = 0;
         for (i = 3; i >= 0; i--) {
             if (s.length() > 3 - i) {
-                int ci = s.charAt(3 - i);
+                int ci = s.charAt(3 - i); // return the ASCii value of the char s.charAt(3-i)
                 v += (ci) << (i * 8);
             }
         }

@@ -6,6 +6,7 @@ import simpledb.execution.Predicate;
 import simpledb.execution.SeqScan;
 import simpledb.storage.*;
 import simpledb.transaction.Transaction;
+import simpledb.transaction.TransactionId;
 
 import java.util.HashMap;
 import java.util.Iterator;
@@ -15,13 +16,13 @@ import java.util.concurrent.ConcurrentMap;
 
 /**
  * TableStats represents statistics (e.g., histograms) about base tables in a
- * query. 
- * 
+ * query.
+ *
  * This class is not needed in implementing lab1 and lab2.
  */
 public class TableStats {
 
-    private static final ConcurrentMap<String, TableStats> statsMap = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<String, TableStats> statsMap = new ConcurrentHashMap<String, TableStats>();
 
     static final int IOCOSTPERPAGE = 1000;
 
@@ -32,14 +33,20 @@ public class TableStats {
     public static void setTableStats(String tablename, TableStats stats) {
         statsMap.put(tablename, stats);
     }
-    
-    public static void setStatsMap(Map<String,TableStats> s)
+
+    public static void setStatsMap(HashMap<String,TableStats> s)
     {
         try {
             java.lang.reflect.Field statsMapF = TableStats.class.getDeclaredField("statsMap");
             statsMapF.setAccessible(true);
             statsMapF.set(null, s);
-        } catch (NoSuchFieldException | IllegalAccessException | IllegalArgumentException | SecurityException e) {
+        } catch (NoSuchFieldException e) {
+            e.printStackTrace();
+        } catch (SecurityException e) {
+            e.printStackTrace();
+        } catch (IllegalArgumentException e) {
+            e.printStackTrace();
+        } catch (IllegalAccessException e) {
             e.printStackTrace();
         }
 
@@ -68,10 +75,19 @@ public class TableStats {
      */
     static final int NUM_HIST_BINS = 100;
 
+    private int ioCostPerPage;
+    private DbFile dbFile;
+    private int tableid;
+    private int numFields;
+    private int numTuples;
+    private int numPages;
+    private HashMap<Integer,IntHistogram> intHistogramHashMap;
+    private HashMap<Integer,StringHistogram> stringHistogramHashMap;
+
     /**
      * Create a new TableStats object, that keeps track of statistics on each
      * column of a table
-     * 
+     *
      * @param tableid
      *            The table over which to compute statistics
      * @param ioCostPerPage
@@ -87,29 +103,123 @@ public class TableStats {
         // necessarily have to (for example) do everything
         // in a single scan of the table.
         // some code goes here
+        numTuples = 0;
+        this.tableid = tableid;
+        this.ioCostPerPage = ioCostPerPage;
+        intHistogramHashMap = new HashMap<Integer, IntHistogram>();
+        stringHistogramHashMap = new HashMap<Integer, StringHistogram>();
+
+        dbFile = Database.getCatalog().getDatabaseFile(tableid);
+        numPages = ((HeapFile)dbFile).numPages();
+        TupleDesc td = dbFile.getTupleDesc();
+
+        numFields = td.numFields();
+        Type types[] = getTypes(td);
+
+        int[] mins = new int[numFields];
+        int[] maxs = new int[numFields];
+
+        TransactionId tid = new TransactionId();
+        SeqScan scan = new SeqScan(tid,tableid,"");
+        try{
+            scan.open();
+            for(int i=0;i<numFields;++i){
+                if(types[i] == Type.STRING_TYPE)
+                    continue;
+
+                int min = Integer.MAX_VALUE;
+                int max = Integer.MIN_VALUE;
+
+                while(scan.hasNext()){
+                    if(i == 0) numTuples++;
+                    Tuple tuple = scan.next();
+                    IntField field = (IntField)tuple.getField(i);
+                    int val = field.getValue();
+                    if(val > max) max = val;
+                    if(val < min) min = val;
+                }
+                scan.rewind();
+                mins[i] = min;
+                maxs[i] = max;
+            }
+            scan.close();
+        }catch (Exception e){
+            e.printStackTrace();
+        }
+
+        for(int i=0;i < numFields;++i){
+            Type type = types[i];
+            if(type == Type.INT_TYPE){
+                IntHistogram intHistogram = new IntHistogram(Math.min(NUM_HIST_BINS, maxs[i] - mins[i] + 1),mins[i],maxs[i]); // ensure the dispersion of data set like 0-32 for 1000 buckets
+                intHistogramHashMap.put(i,intHistogram);
+            }else{
+                StringHistogram stringHistogram = new StringHistogram(NUM_HIST_BINS);
+                stringHistogramHashMap.put(i,stringHistogram);
+            }
+        }
+
+        addValueToHist();
+    }
+
+    private Type[] getTypes(TupleDesc td){
+        int numFields = td.numFields();
+        Type[] types = new Type[numFields];
+
+        for(int i=0;i<numFields;++i){
+            Type t = td.getFieldType(i);
+            types[i] = t;
+        }
+        return types;
+    }
+
+    private void addValueToHist(){
+        TransactionId tid = new TransactionId();
+        SeqScan scan = new SeqScan(tid,tableid,"");
+        try{
+            scan.open();
+            while(scan.hasNext()){
+                Tuple tuple = scan.next();
+
+                for(int i=0;i<numFields;++i){
+                    Field field = tuple.getField(i);
+
+                    if(field.getType() == Type.INT_TYPE){
+                        int val = ((IntField)field).getValue();
+                        intHistogramHashMap.get(i).addValue(val);
+                    }else{
+                        String val = ((StringField)field).getValue();
+                        stringHistogramHashMap.get(i).addValue(val);
+                    }
+                }
+            }
+            scan.close();
+        }catch (Exception e){
+            e.printStackTrace();
+        }
     }
 
     /**
      * Estimates the cost of sequentially scanning the file, given that the cost
      * to read a page is costPerPageIO. You can assume that there are no seeks
      * and that no pages are in the buffer pool.
-     * 
+     *
      * Also, assume that your hard drive can only read entire pages at once, so
      * if the last page of the table only has one tuple on it, it's just as
      * expensive to read as a full page. (Most real hard drives can't
      * efficiently address regions smaller than a page at a time.)
-     * 
+     *
      * @return The estimated cost of scanning the table.
      */
     public double estimateScanCost() {
         // some code goes here
-        return 0;
+        HeapFile heapFile = (HeapFile)dbFile;
+        return heapFile.numPages() * ioCostPerPage;
     }
 
     /**
      * This method returns the number of tuples in the relation, given that a
      * predicate with selectivity selectivityFactor is applied.
-     * 
+     *
      * @param selectivityFactor
      *            The selectivity of any predicates over the table
      * @return The estimated cardinality of the scan with the specified
@@ -117,7 +227,8 @@ public class TableStats {
      */
     public int estimateTableCardinality(double selectivityFactor) {
         // some code goes here
-        return 0;
+        double cardinality = numTuples * selectivityFactor;
+        return (int) cardinality;
     }
 
     /**
@@ -138,7 +249,7 @@ public class TableStats {
     /**
      * Estimate the selectivity of predicate <tt>field op constant</tt> on the
      * table.
-     * 
+     *
      * @param field
      *            The field over which the predicate ranges
      * @param op
@@ -150,7 +261,15 @@ public class TableStats {
      */
     public double estimateSelectivity(int field, Predicate.Op op, Field constant) {
         // some code goes here
-        return 1.0;
+        double selectivity;
+        if(constant.getType() == Type.INT_TYPE){
+            IntField intField = (IntField) constant;
+            selectivity = intHistogramHashMap.get(field).estimateSelectivity(op,intField.getValue());
+        }else{
+            StringField stringField = (StringField) constant;
+            selectivity = stringHistogramHashMap.get(field).estimateSelectivity(op,stringField.getValue());
+        }
+        return selectivity;
     }
 
     /**
@@ -158,7 +277,7 @@ public class TableStats {
      * */
     public int totalTuples() {
         // some code goes here
-        return 0;
+        return numTuples;
     }
 
 }

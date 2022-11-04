@@ -534,8 +534,7 @@ public class BTreeUtility {
 				synchronized(elock) {
 					error = e;
 				}
-
-                Database.getBufferPool().transactionComplete(tid, false);
+				Database.getBufferPool().transactionComplete(tid, false);
             }
 		}
 
@@ -618,7 +617,7 @@ public class BTreeUtility {
 					error = e;
 				}
 
-                Database.getBufferPool().transactionComplete(tid, false);
+				Database.getBufferPool().transactionComplete(tid, false);
             }
 		}
 
@@ -686,7 +685,7 @@ public class BTreeUtility {
 					error = e;
 				}
 
-                Database.getBufferPool().transactionComplete(tid, false);
+				Database.getBufferPool().transactionComplete(tid, false);
             }
 		}
 		
