@@ -1,3 +1,8 @@
+Ths is a basic DBMS built based on MIT 6.824 Database System course project by 3dmcodecopier.
+
+
+
+
 course-info
 ===========
 
